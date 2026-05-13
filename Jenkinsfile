@@ -4,10 +4,10 @@ pipeline {
         cron('TZ=Asia/Kolkata\n0 7,12,18 * * *')
     }
     environment {
-        PATH = "/Users/narotamkumarmishra/.nvm/versions/node/v22.20.0/bin:${env.PATH}"
-        NAUKRI_USERNAME = credentials('NAUKRI_EMAIL')
-        NAUKRI_PASSWORD = credentials('NAUKRI_PASSWORD')
-    }
+    PATH = "/usr/local/bin:${env.PATH}"
+    NAUKRI_USERNAME = credentials('NAUKRI_EMAIL')
+    NAUKRI_PASSWORD = credentials('NAUKRI_PASSWORD')
+}
     stages {
         stage('Checkout') {
             steps {
