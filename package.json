@@ -1,10 +1,12 @@
 {
   "name": "naukari_resume-automation",
   "version": "1.0.0",
-  "description": "This script automates the process of updating your resume on Naukri.com using Selenium.",
-  "main": "index.js",
+  "description": "Automates resume uploads on Naukri.com using Puppeteer.",
+  "main": "NaukriResumeScript.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "upload:resume": "node NaukriResumeScript.js",
+    "start": "npm run upload:resume",
+    "validate:env": "node -e \"if (!process.env.NAUKRI_USERNAME || !process.env.NAUKRI_PASSWORD) { throw new Error('Missing required environment variables'); } console.log('Required environment variables are present.');\""
   },
   "keywords": [],
   "author": "",

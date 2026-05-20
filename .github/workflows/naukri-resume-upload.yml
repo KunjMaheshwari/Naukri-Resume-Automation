@@ -1,0 +1,176 @@
+name: Naukri Resume Upload
+
+run-name: Naukri resume upload | ${{ github.event_name }} | ${{ github.ref_name }}
+
+on:
+  # Jenkins ran at 7:00 AM, 12:00 PM, and 6:00 PM IST.
+  # GitHub Actions cron is UTC, so these map to 01:30, 06:30, and 12:30 UTC.
+  schedule:
+    - cron: "30 1,6,12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: naukri-resume-upload
+  cancel-in-progress: false
+
+jobs:
+  upload-resume:
+    name: Upload resume to Naukri
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      NODE_VERSION: "24"
+      NAUKRI_USERNAME: ${{ secrets.NAUKRI_USERNAME }}
+      NAUKRI_PASSWORD: ${{ secrets.NAUKRI_PASSWORD }}
+      PUPPETEER_CACHE_DIR: ${{ github.workspace }}/.cache/puppeteer
+
+    steps:
+      # Source checkout with the resume asset under utils/.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Node 24 is the current LTS line. npm cache keeps scheduled runs fast.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Cache Puppeteer's browser download between scheduled runs.
+      - name: Cache Puppeteer browser binaries
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PUPPETEER_CACHE_DIR }}
+          key: puppeteer-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            puppeteer-${{ runner.os }}-
+
+      # Install Chromium dependencies commonly required by Puppeteer on headless Linux.
+      - name: Install Linux dependencies for Puppeteer
+        run: |
+          set -euo pipefail
+
+          echo "Installing runtime libraries required by Chromium..."
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates \
+            fonts-liberation \
+            libasound2t64 \
+            libatk-bridge2.0-0 \
+            libatk1.0-0 \
+            libc6 \
+            libcairo2 \
+            libcups2 \
+            libdbus-1-3 \
+            libdrm2 \
+            libexpat1 \
+            libfontconfig1 \
+            libgbm1 \
+            libgcc-s1 \
+            libglib2.0-0 \
+            libgtk-3-0 \
+            libnspr4 \
+            libnss3 \
+            libpango-1.0-0 \
+            libpangocairo-1.0-0 \
+            libstdc++6 \
+            libx11-6 \
+            libx11-xcb1 \
+            libxcb1 \
+            libxcomposite1 \
+            libxcursor1 \
+            libxdamage1 \
+            libxext6 \
+            libxfixes3 \
+            libxi6 \
+            libxrandr2 \
+            libxrender1 \
+            libxss1 \
+            libxtst6 \
+            lsb-release \
+            wget \
+            xdg-utils
+          echo "Chromium runtime libraries installed."
+
+      # Fail before installing/running if repository secrets are missing.
+      - name: Validate required secrets
+        run: |
+          set -euo pipefail
+
+          missing=0
+          if [[ -z "${NAUKRI_USERNAME:-}" ]]; then
+            echo "::error title=Missing secret::NAUKRI_USERNAME is not configured."
+            missing=1
+          fi
+          if [[ -z "${NAUKRI_PASSWORD:-}" ]]; then
+            echo "::error title=Missing secret::NAUKRI_PASSWORD is not configured."
+            missing=1
+          fi
+          if [[ "$missing" -ne 0 ]]; then
+            exit 1
+          fi
+
+          echo "Required environment variables are present."
+
+      # npm ci is deterministic when package-lock.json exists; fallback keeps forks usable.
+      - name: Install Node.js dependencies
+        run: |
+          set -euo pipefail
+
+          if [[ -f package-lock.json ]]; then
+            echo "package-lock.json found. Installing with npm ci..."
+            npm ci
+          else
+            echo "package-lock.json not found. Installing with npm install..."
+            npm install
+          fi
+
+      # Prepare artifact directories used only when diagnostics are needed.
+      - name: Prepare debug directories
+        run: |
+          set -euo pipefail
+
+          mkdir -p debug/screenshots debug/logs debug/files
+          echo "Debug directories prepared."
+
+      # Run the production Puppeteer automation. Secrets are passed by env and never echoed.
+      - name: Upload resume through Naukri automation
+        run: |
+          set -euo pipefail
+
+          echo "Starting Naukri resume upload automation..."
+          node NaukriResumeScript.js 2>&1 | tee debug/logs/naukri-resume-upload.log
+
+      # Keep the run summary useful without exposing credentials.
+      - name: Write workflow summary
+        if: always()
+        run: |
+          {
+            echo "## Naukri Resume Upload"
+            echo ""
+            echo "- Event: \`${{ github.event_name }}\`"
+            echo "- Ref: \`${{ github.ref_name }}\`"
+            echo "- Node.js: \`${NODE_VERSION}\`"
+            echo "- Status: \`${{ job.status }}\`"
+            echo "- Completed at UTC: \`$(date -u +"%Y-%m-%d %H:%M:%S")\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Upload diagnostics only when the automation fails.
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: naukri-resume-upload-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            debug/screenshots/**
+            debug/logs/**
+            debug/files/**
+            *.png
+            *.log
+          if-no-files-found: ignore
+          retention-days: 14

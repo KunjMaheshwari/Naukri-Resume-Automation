@@ -3,21 +3,19 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
+if (!process.env.NAUKRI_USERNAME || !process.env.NAUKRI_PASSWORD) {
+    throw new Error("Missing required environment variables");
+}
+
 // Optimized delay function (shorter random delays)
 const optimizedDelay = (min, max) => 
     new Promise(resolve => setTimeout(resolve, Math.random() * (max - min) + min));
 
 (async () => {
-    // const username = process.env.username;
-    // const password = process.env.password;
-
-    const username = process.env.NAUKRI_USERNAME;  // ← must match left side above
-    const password = process.env.NAUKRI_PASSWORD;  // ← must match left side above
-    
-    if (!username || !password) {
-        console.error("Missing credentials. Set NAUKRI_USERNAME and NAUKRI_PASSWORD environment variables.");
-        process.exit(1);
-    }
+    const username = process.env.NAUKRI_USERNAME;
+    const password = process.env.NAUKRI_PASSWORD;
+    const debugDir = path.join(__dirname, 'debug');
+    const screenshotDir = path.join(debugDir, 'screenshots');
     
     console.log(`Starting resume update process...`);
     
@@ -112,7 +110,10 @@ const optimizedDelay = (min, max) =>
         console.error(`Error: ${error.message}`);
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         if (page) {
-            await page.screenshot({ path: `error_${timestamp}.png` });
+            fs.mkdirSync(screenshotDir, { recursive: true });
+            const screenshotPath = path.join(screenshotDir, `error_${timestamp}.png`);
+            await page.screenshot({ path: screenshotPath, fullPage: true });
+            console.error(`Failure screenshot saved to: ${screenshotPath}`);
         }
         process.exit(1);
     } finally {

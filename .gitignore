@@ -1,83 +1,41 @@
 webdriver/
-*.log
-*.png
-
-node_modules/
 
 # Environment files
 .env
-.env.local
-.env.development
-.env.production
-.env.test
-.env.*    # Ignores all .env files with any extension
-
-# ----------------------
-# Python
-# ----------------------
-
-# Byte-compiled / optimized files
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Virtual environments
-venv/
-.env/
 .env.*
-.venv/
-ENV/
+!.env.example
 
-# Distribution / packaging
-build/
-dist/
-*.egg-info/
-.eggs/
-
-# Python cache
-.pytest_cache/
-.mypy_cache/
-.ipynb_checkpoints/
-
-# Logs
-*.log
-
-# MacOS
-.DS_Store
-
-# ----------------------
 # JavaScript / Node.js
-# ----------------------
-
-# Dependencies
 node_modules/
-
-# Build outputs
-dist/
-build/
-
-# Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Environment files
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+ENV/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
 
-# Package lock files (optional depending on project)
-package-lock.json
-yarn.lock
-
-# Cache
+# Build and framework output
+build/
+dist/
 .cache/
 .next/
 .nuxt/
 
-# MacOS
-.DS_Store
+# Runtime diagnostics
+debug/
+*.log
+*.png
+error_*.png
 
-# utils/
+# macOS
+.DS_Store
