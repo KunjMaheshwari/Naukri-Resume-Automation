@@ -26,6 +26,7 @@ jobs:
       NODE_VERSION: "24"
       NAUKRI_USERNAME: ${{ secrets.NAUKRI_USERNAME }}
       NAUKRI_PASSWORD: ${{ secrets.NAUKRI_PASSWORD }}
+      DEBUG_MODE: ${{ vars.DEBUG_MODE || 'false' }}
       PUPPETEER_CACHE_DIR: ${{ github.workspace }}/.cache/puppeteer
 
     steps:
