@@ -1,4 +1,5 @@
-const puppeteer = require("puppeteer-extra");
+const plainPuppeteer = require("puppeteer");
+const puppeteerExtra = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const fs = require("fs");
 const path = require("path");
@@ -8,12 +9,13 @@ if (!process.env.NAUKRI_USERNAME || !process.env.NAUKRI_PASSWORD) {
   throw new Error("Missing required environment variables");
 }
 
-puppeteer.use(StealthPlugin());
-
 const CONFIG = Object.freeze({
   env: {
     isCI: String(process.env.CI || "").toLowerCase() === "true",
     debugMode: String(process.env.DEBUG_MODE || "").toLowerCase() === "true",
+    debugCompareModes:
+      String(process.env.DEBUG_COMPARE_MODES || "").toLowerCase() === "true",
+    hardeningMode: process.env.BROWSER_HARDENING_MODE || "balanced",
     username: process.env.NAUKRI_USERNAME,
     password: process.env.NAUKRI_PASSWORD,
   },
@@ -38,7 +40,26 @@ const CONFIG = Object.freeze({
       isMobile: false,
       hasTouch: false,
     },
-    launchArgs: [
+    localHeadless:
+      String(
+        process.env.HEADLESS || process.env.LOCAL_HEADLESS || "false",
+      ).toLowerCase() === "true",
+    baselineLaunchArgs: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--window-size=1366,768",
+    ],
+    balancedLaunchArgs: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-notifications",
+      "--disable-popup-blocking",
+      "--lang=en-US,en",
+      "--window-size=1366,768",
+    ],
+    aggressiveLaunchArgs: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
@@ -47,17 +68,13 @@ const CONFIG = Object.freeze({
       "--disable-infobars",
       "--disable-notifications",
       "--disable-popup-blocking",
-      "--disable-background-timer-throttling",
-      "--disable-renderer-backgrounding",
-      "--disable-features=site-per-process,TranslateUI",
       "--lang=en-US,en",
       "--window-size=1366,768",
     ],
   },
   timeouts: {
     navigation: 45000,
-    pageReadySoft: 18000,
-    pageReadyHard: 55000,
+    hydration: 90000,
     selector: 18000,
     modal: 22000,
     postLogin: 45000,
@@ -66,7 +83,6 @@ const CONFIG = Object.freeze({
   retries: {
     browserLaunch: 2,
     navigation: 2,
-    pageReadyRecovery: 1,
     selector: 2,
     interaction: 3,
     login: 2,
@@ -103,27 +119,29 @@ const CONFIG = Object.freeze({
     },
   },
   readiness: {
-    minimumHtmlLength: 1200,
-    minimumVisibleTextLength: 40,
-    appContainerSelectors: [
-      "#root",
-      "#__next",
-      "main",
-      "header",
-      "nav",
-      "[class*='naukri' i]",
-      "[class*='gnb' i]",
+    minimumVisibleTextLength: 300,
+    minimumInteractiveCount: 5,
+    renderedUiText: [
+      "Find your dream job now",
+      "Register",
+      "Login",
+      "Search jobs",
+      "Jobs",
     ],
-    challengePatterns: [
+    searchPlaceholders: [
+      "Enter skills / designations / companies",
+      "Enter location",
+      "Search jobs here",
+    ],
+    blockedText: [
+      "Access Denied",
+      "Forbidden",
+      "Request blocked",
+      "Checking your browser",
+      "Please wait",
       "captcha",
       "recaptcha",
       "verify you are human",
-      "checking your browser",
-      "access denied",
-      "suspicious activity",
-      "temporarily blocked",
-      "something went wrong",
-      "enable javascript",
     ],
   },
 });
@@ -396,24 +414,141 @@ class HumanInteraction {
   }
 }
 
+class BrowserProfileFactory {
+  static profiles(config) {
+    return {
+      minimal: {
+        name: "minimal",
+        puppeteer: plainPuppeteer,
+        useStealth: false,
+        launchArgs: config.browser.baselineLaunchArgs,
+        applyHeaders: false,
+        applyTimezone: false,
+        overrideLevel: "none",
+      },
+      balanced: {
+        name: "balanced",
+        puppeteer: plainPuppeteer,
+        useStealth: false,
+        launchArgs: config.browser.balancedLaunchArgs,
+        applyHeaders: true,
+        applyTimezone: true,
+        overrideLevel: "none",
+      },
+      aggressive: {
+        name: "aggressive",
+        puppeteer: puppeteerExtra,
+        useStealth: true,
+        launchArgs: config.browser.aggressiveLaunchArgs,
+        applyHeaders: true,
+        applyTimezone: true,
+        overrideLevel: "navigator",
+      },
+    };
+  }
+
+  static comparisonProfiles(config) {
+    return [
+      {
+        name: "baseline-plain",
+        puppeteer: plainPuppeteer,
+        useStealth: false,
+        launchArgs: config.browser.baselineLaunchArgs,
+        applyHeaders: false,
+        applyTimezone: false,
+        overrideLevel: "none",
+      },
+      {
+        name: "launch-args-only",
+        puppeteer: plainPuppeteer,
+        useStealth: false,
+        launchArgs: config.browser.balancedLaunchArgs,
+        applyHeaders: true,
+        applyTimezone: true,
+        overrideLevel: "none",
+      },
+      {
+        name: "stealth-plugin-only",
+        puppeteer: puppeteerExtra,
+        useStealth: true,
+        launchArgs: config.browser.baselineLaunchArgs,
+        applyHeaders: false,
+        applyTimezone: false,
+        overrideLevel: "none",
+      },
+      {
+        name: "navigator-overrides",
+        puppeteer: plainPuppeteer,
+        useStealth: false,
+        launchArgs: config.browser.balancedLaunchArgs,
+        applyHeaders: true,
+        applyTimezone: true,
+        overrideLevel: "navigator",
+      },
+      {
+        name: "permissions-overrides",
+        puppeteer: plainPuppeteer,
+        useStealth: false,
+        launchArgs: config.browser.balancedLaunchArgs,
+        applyHeaders: true,
+        applyTimezone: true,
+        overrideLevel: "permissions",
+      },
+      {
+        name: "advanced-fingerprint",
+        puppeteer: puppeteerExtra,
+        useStealth: true,
+        launchArgs: config.browser.aggressiveLaunchArgs,
+        applyHeaders: true,
+        applyTimezone: true,
+        overrideLevel: "advanced",
+      },
+    ];
+  }
+
+  static select(config) {
+    const profiles = this.profiles(config);
+    const selected = profiles[config.env.hardeningMode] || profiles.balanced;
+    if (selected.useStealth) {
+      this.ensureStealthPlugin();
+    }
+    return selected;
+  }
+
+  static ensureStealthPlugin() {
+    if (!this.stealthRegistered) {
+      puppeteerExtra.use(StealthPlugin());
+      this.stealthRegistered = true;
+    }
+  }
+}
+
 class BrowserManager {
   constructor(config, diagnostics) {
     this.config = config;
     this.diagnostics = diagnostics;
     this.browser = null;
+    this.profile = BrowserProfileFactory.select(config);
   }
 
   launchConfigs() {
+    const shouldRunHeadless = this.config.env.isCI
+      ? "new"
+      : this.config.browser.localHeadless
+        ? "new"
+        : false;
+
     return [
       {
-        headless: "new",
+        headless: shouldRunHeadless,
+        slowMo: shouldRunHeadless === false ? 80 : undefined,
         defaultViewport: this.config.browser.viewport,
-        args: this.config.browser.launchArgs,
+        args: this.profile.launchArgs,
       },
       {
         headless: true,
         defaultViewport: this.config.browser.viewport,
-        args: [...this.config.browser.launchArgs, "--single-process"],
+        args: [...this.profile.launchArgs, "--single-process"],
       },
     ];
   }
@@ -428,10 +563,12 @@ class BrowserManager {
           ];
         Logger.info("Launching Chromium", {
           attempt,
+          hardeningMode: this.profile.name,
+          stealth: this.profile.useStealth,
           headless: launchConfig.headless,
           ci: this.config.env.isCI,
         });
-        return puppeteer.launch(launchConfig);
+        return this.profile.puppeteer.launch(launchConfig);
       },
       {
         attempts: this.config.retries.browserLaunch,
@@ -452,9 +589,14 @@ class BrowserManager {
 }
 
 class PageManager {
-  constructor(config, diagnostics) {
+  constructor(
+    config,
+    diagnostics,
+    browserProfile = BrowserProfileFactory.select(config),
+  ) {
     this.config = config;
     this.diagnostics = diagnostics;
+    this.browserProfile = browserProfile;
   }
 
   async createPage(browser) {
@@ -465,61 +607,96 @@ class PageManager {
   }
 
   async configurePage(page) {
+    if (typeof page.waitForTimeout !== "function") {
+      page.waitForTimeout = (milliseconds) => delay(milliseconds);
+    }
+
     page.setDefaultTimeout(this.config.timeouts.selector);
     page.setDefaultNavigationTimeout(this.config.timeouts.navigation);
     await page.setViewport(this.config.browser.viewport);
-    await page.setUserAgent(this.config.browser.userAgent);
-    await page.setExtraHTTPHeaders({
-      "accept-language": "en-US,en;q=0.9",
-      "upgrade-insecure-requests": "1",
-    });
-
-    try {
-      await page.emulateTimezone("Asia/Kolkata");
-    } catch (error) {
-      Logger.warn("Timezone emulation unavailable", { error: error.message });
+    if (this.browserProfile.applyHeaders) {
+      await page.setUserAgent(this.config.browser.userAgent);
+      await page.setExtraHTTPHeaders({
+        "accept-language": "en-US,en;q=0.9",
+        "upgrade-insecure-requests": "1",
+      });
     }
 
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-      Object.defineProperty(navigator, "languages", {
-        get: () => ["en-US", "en"],
-      });
-      Object.defineProperty(navigator, "platform", { get: () => "Win32" });
-      Object.defineProperty(navigator, "hardwareConcurrency", { get: () => 8 });
-      Object.defineProperty(navigator, "deviceMemory", { get: () => 8 });
-      Object.defineProperty(navigator, "plugins", {
-        get: () => [
-          { name: "Chrome PDF Plugin", filename: "internal-pdf-viewer" },
-          {
-            name: "Chrome PDF Viewer",
-            filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",
-          },
-          { name: "Native Client", filename: "internal-nacl-plugin" },
-        ],
-      });
-
-      const originalQuery = window.navigator.permissions?.query;
-      if (originalQuery) {
-        window.navigator.permissions.query = (parameters) =>
-          parameters.name === "notifications"
-            ? Promise.resolve({ state: Notification.permission })
-            : originalQuery(parameters);
+    if (this.browserProfile.applyTimezone) {
+      try {
+        await page.emulateTimezone("Asia/Kolkata");
+      } catch (error) {
+        Logger.warn("Timezone emulation unavailable", { error: error.message });
       }
+    }
 
-      window.chrome = window.chrome || { runtime: {} };
-      window.screen = window.screen || {};
-    });
+    await this.applyProgressiveOverrides(page);
+
+    await page.setCacheEnabled(true);
 
     Logger.info("Page configured", {
       viewport: this.config.browser.viewport,
+      hardeningMode: this.browserProfile.name,
+      overrideLevel: this.browserProfile.overrideLevel,
+      stealth: this.browserProfile.useStealth,
       ci: this.config.env.isCI,
       debugMode: this.config.env.debugMode,
     });
   }
 
-  async navigate(page, url, stage) {
-    return RetryManager.withRetry(
+  async applyProgressiveOverrides(page) {
+    const level = this.browserProfile.overrideLevel;
+    if (level === "none") return;
+
+    // Safe policy: do not spoof window.chrome, plugins, permissions,
+    // hardwareConcurrency, or deviceMemory in the stable balanced profile.
+    if (
+      level === "navigator" ||
+      level === "permissions" ||
+      level === "advanced"
+    ) {
+      await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+        Object.defineProperty(navigator, "languages", {
+          get: () => ["en-US", "en"],
+        });
+        Object.defineProperty(navigator, "platform", { get: () => "Win32" });
+      });
+    }
+
+    if (level === "permissions" || level === "advanced") {
+      await page.evaluateOnNewDocument(() => {
+        const originalQuery = window.navigator.permissions?.query;
+        if (originalQuery) {
+          window.navigator.permissions.query = (parameters) =>
+            parameters.name === "notifications"
+              ? Promise.resolve({ state: Notification.permission })
+              : originalQuery(parameters);
+        }
+      });
+    }
+
+    if (level === "advanced") {
+      await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, "hardwareConcurrency", {
+          get: () => 8,
+        });
+        Object.defineProperty(navigator, "deviceMemory", { get: () => 8 });
+        Object.defineProperty(navigator, "plugins", {
+          get: () => [
+            { name: "Chrome PDF Plugin", filename: "internal-pdf-viewer" },
+            {
+              name: "Chrome PDF Viewer",
+              filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",
+            },
+          ],
+        });
+      });
+    }
+  }
+
+  async navigate(page, url, stage, hydrationOptions = {}) {
+    await RetryManager.withRetry(
       `${stage} navigation`,
       async () => {
         Logger.info(`${stage}: navigating`, { url });
@@ -527,146 +704,195 @@ class PageManager {
           waitUntil: "domcontentloaded",
           timeout: this.config.timeouts.navigation,
         });
-        return this.waitForPageReady(page, stage);
       },
       {
         attempts: this.config.retries.navigation,
         baseDelay: 2000,
       },
     );
+
+    await page.waitForTimeout(5000);
+    return this.waitForHydratedUIWithRecovery(page, stage, hydrationOptions);
   }
 
-  async waitForPageReady(page, stage) {
+  async waitForHydratedUIWithRecovery(page, stage, hydrationOptions = {}) {
+    try {
+      return await this.waitForHydratedUI(page, stage, hydrationOptions);
+    } catch (error) {
+      Logger.warn(`${stage}: hydration validation failed; reloading once`, {
+        error: error.message,
+      });
+      await this.diagnostics.captureStage(
+        page,
+        `${stage}-hydration-before-reload`,
+        {
+          includeHtml: true,
+          error: error.message,
+        },
+      );
+      await page.waitForTimeout(10000);
+      await page.reload({
+        waitUntil: "domcontentloaded",
+        timeout: this.config.timeouts.navigation,
+      });
+      await page.waitForTimeout(5000);
+      return this.waitForHydratedUI(page, `${stage}-reload`, hydrationOptions);
+    }
+  }
+
+  async waitForHydratedUI(page, stage = "page", hydrationOptions = {}) {
     const startedAt = Date.now();
     let lastState = null;
-    let stableLowContentSamples = 0;
-    let recoveryUsed = false;
 
-    Logger.info(`${stage}: waiting for page readiness`);
+    Logger.info(`${stage}: waiting for hydrated Naukri UI`);
 
-    while (Date.now() - startedAt < this.config.timeouts.pageReadyHard) {
-      const state = await this.inspectReadiness(page);
+    while (Date.now() - startedAt < this.config.timeouts.hydration) {
+      const state = await this.collectHydrationMetrics(page, hydrationOptions);
       lastState = state;
 
-      if (this.isChallengeState(state)) {
-        await this.diagnostics.captureStage(page, `${stage}-challenge`, {
-          includeHtml: true,
-          state,
-        });
-        throw new Error(`${stage}: anti-bot or challenge page detected`);
-      }
-
-      if (this.isReadyState(state)) {
-        Logger.info(`${stage}: page ready`, state);
+      if (state.hydrated) {
+        Logger.info(`${stage}: hydrated UI detected`, state);
         return state;
       }
 
-      if (this.isBlankOrHydrationStalled(state)) {
-        stableLowContentSamples += 1;
-      } else {
-        stableLowContentSamples = 0;
-      }
+      Logger.info(`${stage}: hydration pending`, {
+        elapsedMs: Date.now() - startedAt,
+        readyState: state.readyState,
+        titleLength: state.title.length,
+        visibleTextLength: state.visibleTextLength,
+        interactiveCount: state.interactiveCount,
+        renderedUiFound: state.renderedUiFound,
+        blockedTextFound: state.blockedTextFound,
+        url: state.url,
+      });
 
-      const elapsed = Date.now() - startedAt;
-      if (
-        !recoveryUsed &&
-        elapsed > this.config.timeouts.pageReadySoft &&
-        stableLowContentSamples >= 3
-      ) {
-        recoveryUsed = true;
-        Logger.warn(
-          `${stage}: readiness soft timeout reached; reloading once`,
-          state,
-        );
-        await this.diagnostics.captureStage(
-          page,
-          `${stage}-readiness-recovery`,
-          {
-            includeHtml: true,
-            state,
-          },
-        );
-        await page.reload({
-          waitUntil: "domcontentloaded",
-          timeout: this.config.timeouts.navigation,
-        });
-        stableLowContentSamples = 0;
-      }
-
-      await delay(this.progressivePollDelay(elapsed));
+      await page.waitForTimeout(1000);
     }
 
-    await this.diagnostics.captureStage(page, `${stage}-readiness-timeout`, {
+    await this.diagnostics.captureStage(page, `${stage}-hydration-timeout`, {
       includeHtml: true,
       state: lastState,
     });
-    throw new Error(`${stage}: page readiness hard timeout`);
+    throw new Error(
+      `${stage}: hydrated UI timeout after ${this.config.timeouts.hydration}ms`,
+    );
   }
 
-  async inspectReadiness(page) {
+  async collectHydrationMetrics(page, hydrationOptions = {}) {
+    const readiness = {
+      ...this.config.readiness,
+      ...hydrationOptions,
+      renderedUiText:
+        hydrationOptions.renderedUiText || this.config.readiness.renderedUiText,
+      searchPlaceholders:
+        hydrationOptions.searchPlaceholders ||
+        this.config.readiness.searchPlaceholders,
+    };
+
     return page.evaluate((readiness) => {
-      const html = document.documentElement?.outerHTML || "";
       const bodyText = document.body
         ? document.body.innerText.replace(/\s+/g, " ").trim()
         : "";
-      const lowerText = bodyText.toLowerCase();
-      const appContainerCount = readiness.appContainerSelectors.filter(
-        (selector) => document.querySelector(selector),
-      ).length;
-      const interactiveCount = document.querySelectorAll(
-        "a, button, input, textarea, select, [role='button']",
-      ).length;
-      const challengeMatches = readiness.challengePatterns.filter((pattern) => {
-        const normalizedPattern = pattern.toLowerCase();
+      const normalizedBodyText = bodyText.toLowerCase();
+      const interactiveCount =
+        document.querySelectorAll("button, a, input").length;
+      const isVisible = (node) => {
+        if (!node) return false;
+        const rect = node.getBoundingClientRect();
+        const style = window.getComputedStyle(node);
         return (
-          lowerText.includes(normalizedPattern) ||
-          (document.title || "").toLowerCase().includes(normalizedPattern)
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          Number(style.opacity) > 0.01
         );
-      });
+      };
+      const visibleLoginButton = isVisible(
+        document.evaluate(
+          "//a[@title='Jobseeker Login'] | //a[contains(normalize-space(.),'Login')] | //button[contains(normalize-space(.),'Login')]",
+          document,
+          null,
+          XPathResult.FIRST_ORDERED_NODE_TYPE,
+          null,
+        ).singleNodeValue,
+      );
+      const visibleRegisterButton = Array.from(
+        document.querySelectorAll("a, button"),
+      ).some(
+        (node) =>
+          isVisible(node) &&
+          /register/i.test(node.innerText || node.textContent || ""),
+      );
+      const visibleRequiredText = readiness.renderedUiText.some((text) =>
+        bodyText.includes(text),
+      );
+      const visibleSearchPlaceholder = Array.from(
+        document.querySelectorAll("input, textarea"),
+      ).some(
+        (node) =>
+          isVisible(node) &&
+          readiness.searchPlaceholders.some((placeholder) =>
+            String(node.getAttribute("placeholder") || "").includes(
+              placeholder,
+            ),
+          ),
+      );
+      const blockedMatches = readiness.blockedText.filter((text) =>
+        normalizedBodyText.includes(text.toLowerCase()),
+      );
+      const renderedUiFound =
+        visibleLoginButton ||
+        visibleRegisterButton ||
+        visibleRequiredText ||
+        visibleSearchPlaceholder;
 
-      return {
+      const metrics = {
         url: window.location.href,
         title: document.title || "",
         readyState: document.readyState,
         hasBody: Boolean(document.body),
-        htmlLength: html.length,
         visibleTextLength: bodyText.length,
         interactiveCount,
-        appContainerCount,
-        challengeMatches,
-        bodyPreview: bodyText.slice(0, 240),
+        renderedUiFound,
+        visibleLoginButton,
+        visibleRegisterButton,
+        visibleRequiredText,
+        visibleSearchPlaceholder,
+        blockedTextFound: blockedMatches.length > 0,
+        blockedMatches,
+        bodyPreview: bodyText.slice(0, 1000),
       };
-    }, this.config.readiness);
+
+      return {
+        ...metrics,
+        hydrated:
+          metrics.readyState !== "loading" &&
+          metrics.title.length > 0 &&
+          metrics.visibleTextLength > readiness.minimumVisibleTextLength &&
+          metrics.interactiveCount >= readiness.minimumInteractiveCount &&
+          metrics.renderedUiFound &&
+          !metrics.blockedTextFound,
+      };
+    }, readiness);
   }
 
-  isReadyState(state) {
-    return (
-      ["interactive", "complete"].includes(state.readyState) &&
-      state.hasBody &&
-      state.htmlLength >= this.config.readiness.minimumHtmlLength &&
-      (state.visibleTextLength >=
-        this.config.readiness.minimumVisibleTextLength ||
-        state.interactiveCount >= 5 ||
-        state.appContainerCount > 0)
+  async logVisibleDebugState(page, stage) {
+    const state = await this.collectHydrationMetrics(page);
+    Logger.info(`${stage}: visible rendered state before selector detection`, {
+      url: state.url,
+      title: state.title,
+      visibleTextLength: state.visibleTextLength,
+      interactiveCount: state.interactiveCount,
+      renderedUiFound: state.renderedUiFound,
+      blockedMatches: state.blockedMatches,
+      bodyPreview: state.bodyPreview,
+    });
+    await this.diagnostics.screenshot(
+      page,
+      `${stage}-before-selector-detection`,
     );
-  }
-
-  isBlankOrHydrationStalled(state) {
-    return (
-      !state.hasBody ||
-      state.htmlLength < this.config.readiness.minimumHtmlLength ||
-      (state.visibleTextLength < 20 && state.interactiveCount < 3)
-    );
-  }
-
-  isChallengeState(state) {
-    return state.challengeMatches && state.challengeMatches.length > 0;
-  }
-
-  progressivePollDelay(elapsed) {
-    if (elapsed < 5000) return 350;
-    if (elapsed < 15000) return 750;
-    return 1250;
+    return state;
   }
 }
 
@@ -944,6 +1170,10 @@ class LoginManager {
       this.config.urls.home,
       `homepage-attempt-${attempt}`,
     );
+    await this.pageManager.logVisibleDebugState(
+      page,
+      `homepage-attempt-${attempt}`,
+    );
     await this.assertNoBlockingSignals(page, `homepage-attempt-${attempt}`);
     await this.diagnostics.captureStage(
       page,
@@ -1016,7 +1246,7 @@ class LoginManager {
 
     await navigationPromise;
     await this.pageManager
-      .waitForPageReady(page, `post-login-attempt-${attempt}`)
+      .waitForHydratedUI(page, `post-login-attempt-${attempt}`)
       .catch((error) => {
         Logger.warn("Post-login page readiness did not fully settle", {
           error: error.message,
@@ -1273,7 +1503,16 @@ class ResumeUploadWorkflow {
 
   async upload(page) {
     Logger.info("Navigating to profile for resume upload");
-    await this.pageManager.navigate(page, this.config.urls.profile, "profile");
+    await this.pageManager.navigate(page, this.config.urls.profile, "profile", {
+      renderedUiText: [
+        "Update resume",
+        "Resume headline",
+        "Profile",
+        "My Naukri",
+        "Jobs",
+      ],
+      searchPlaceholders: this.config.readiness.searchPlaceholders,
+    });
     await this.diagnostics.captureStage(page, "profile-loaded");
 
     if (!fs.existsSync(this.config.paths.resume)) {
@@ -1319,15 +1558,180 @@ class ResumeUploadWorkflow {
   }
 }
 
+class HardeningComparisonRunner {
+  constructor(config, diagnostics) {
+    this.config = config;
+    this.diagnostics = diagnostics;
+  }
+
+  async run() {
+    Logger.info("DEBUG_COMPARE_MODES enabled; starting hardening comparison");
+    const results = [];
+
+    for (const profile of BrowserProfileFactory.comparisonProfiles(
+      this.config,
+    )) {
+      if (profile.useStealth) {
+        BrowserProfileFactory.ensureStealthPlugin();
+      }
+
+      const result = await this.runProfile(profile);
+      results.push(result);
+      Logger.info("Hardening comparison profile result", {
+        profile: result.profile,
+        hydrationSucceeded: result.hydrationSucceeded,
+        title: result.state?.title,
+        readyState: result.state?.readyState,
+        visibleTextLength: result.state?.visibleTextLength,
+        interactiveCount: result.state?.interactiveCount,
+        renderedUiFound: result.state?.renderedUiFound,
+        error: result.error,
+      });
+    }
+
+    const summaryPath = path.join(
+      this.config.paths.fileDumpDir,
+      `hardening-comparison_${fileTimestamp()}.json`,
+    );
+    fs.writeFileSync(summaryPath, JSON.stringify(results, null, 2));
+    Logger.info("Hardening comparison completed", {
+      summaryPath,
+      likelyBreakingProfile: this.findLikelyBreakingProfile(results),
+    });
+  }
+
+  async runProfile(profile) {
+    let browser;
+    let page;
+    const startedAt = Date.now();
+
+    try {
+      Logger.info("Comparison profile starting", {
+        profile: profile.name,
+        stealth: profile.useStealth,
+        overrideLevel: profile.overrideLevel,
+      });
+      browser = await profile.puppeteer.launch({
+        headless: "new",
+        defaultViewport: this.config.browser.viewport,
+        args: profile.launchArgs,
+      });
+      page = await browser.newPage();
+      this.diagnostics.attachPage(page);
+
+      const profilePageManager = new PageManager(
+        this.config,
+        this.diagnostics,
+        profile,
+      );
+      await profilePageManager.configurePage(page);
+      await page.goto(this.config.urls.home, {
+        waitUntil: "domcontentloaded",
+        timeout: this.config.timeouts.navigation,
+      });
+
+      let state;
+      let hydrationSucceeded = false;
+      try {
+        await page.waitForTimeout(5000);
+        state = await profilePageManager.waitForHydratedUI(
+          page,
+          `compare-${profile.name}`,
+        );
+        hydrationSucceeded = true;
+      } catch (error) {
+        state = await profilePageManager
+          .collectHydrationMetrics(page)
+          .catch((inspectError) => ({
+            inspectError: inspectError.message,
+          }));
+        Logger.warn("Comparison profile failed hydration", {
+          profile: profile.name,
+          error: error.message,
+          state,
+        });
+      }
+
+      await this.diagnostics.captureStage(page, `compare-${profile.name}`, {
+        profile: profile.name,
+        state,
+      });
+
+      return {
+        profile: profile.name,
+        stealth: profile.useStealth,
+        overrideLevel: profile.overrideLevel,
+        launchArgs: profile.launchArgs,
+        hydrationSucceeded,
+        elapsedMs: Date.now() - startedAt,
+        state,
+      };
+    } catch (error) {
+      Logger.warn("Comparison profile crashed", {
+        profile: profile.name,
+        error: error.message,
+      });
+      if (page) {
+        await this.diagnostics.captureFailure(
+          page,
+          `compare-${profile.name}`,
+          error,
+        );
+      }
+      return {
+        profile: profile.name,
+        stealth: profile.useStealth,
+        overrideLevel: profile.overrideLevel,
+        launchArgs: profile.launchArgs,
+        hydrationSucceeded: false,
+        elapsedMs: Date.now() - startedAt,
+        error: error.message,
+      };
+    } finally {
+      if (browser) {
+        await browser.close().catch((error) => {
+          Logger.warn("Comparison browser close failed", {
+            profile: profile.name,
+            error: error.message,
+          });
+        });
+      }
+    }
+  }
+
+  findLikelyBreakingProfile(results) {
+    const firstSuccessIndex = results.findIndex(
+      (result) => result.hydrationSucceeded,
+    );
+    const firstFailureAfterSuccess = results.find(
+      (result, index) =>
+        firstSuccessIndex !== -1 &&
+        index > firstSuccessIndex &&
+        !result.hydrationSucceeded,
+    );
+    return firstFailureAfterSuccess?.profile || "not-isolated";
+  }
+}
+
 async function main() {
   Logger.info("Starting Naukri resume automation", {
     ci: CONFIG.env.isCI,
     debugMode: CONFIG.env.debugMode,
+    debugCompareModes: CONFIG.env.debugCompareModes,
+    hardeningMode: CONFIG.env.hardeningMode,
   });
 
   const diagnostics = new DiagnosticsManager(CONFIG);
+  if (CONFIG.env.debugCompareModes) {
+    await new HardeningComparisonRunner(CONFIG, diagnostics).run();
+  }
+
   const browserManager = new BrowserManager(CONFIG, diagnostics);
-  const pageManager = new PageManager(CONFIG, diagnostics);
+  const pageManager = new PageManager(
+    CONFIG,
+    diagnostics,
+    browserManager.profile,
+  );
   const selectorManager = new SelectorManager(CONFIG);
   const loginManager = new LoginManager(
     CONFIG,
@@ -1345,6 +1749,11 @@ async function main() {
   let page;
 
   try {
+    Logger.info("Execution mode", {
+      localHeadless: CONFIG.browser.localHeadless,
+      ci: CONFIG.env.isCI,
+      hardeningMode: CONFIG.env.hardeningMode,
+    });
     const browser = await browserManager.launch();
     page = await pageManager.createPage(browser);
     await diagnostics.captureStage(page, "browser-session-created");
@@ -1367,4 +1776,10 @@ async function main() {
   }
 }
 
-main();
+main().catch((error) => {
+  Logger.error("Unhandled fatal error", {
+    error: error.message,
+    stack: error.stack,
+  });
+  process.exit(1);
+});
