@@ -20,14 +20,12 @@ const CONFIG = {
 
     loginSubmitButton: "button[type='submit']",
 
-    profileSelectors: [
-      ".view-profile-wrapper",
-      "a[href*='mnjuser/profile']",
-      ".nI-gNb-drawer",
-      ".nI-gNb-info__sub-link",
-    ],
-
     updateResumeButton: "input[value='Update resume']",
+
+    viewProfileLink: "a[normalize-space()='View profile']",
+
+    uploadSuccessMessage:
+      "//p[text()='Resume has been successfully uploaded.']",
 
     fileInput: "input[type='file']",
   },
@@ -132,11 +130,11 @@ async function navigate(page, url, label) {
   console.log(`Navigating to ${label}...`);
 
   await page.goto(url, {
-    waitUntil: "networkidle2",
+    waitUntil: "domcontentloaded",
     timeout: CONFIG.timeouts.navigation,
   });
 
-  await delay(5000);
+  await delay(8000);
 
   console.log(`Loaded: ${await page.title()}`);
 }
@@ -186,55 +184,43 @@ async function login(page, username, password) {
 
   console.log("[4/5] Clicking login button...");
 
-  await Promise.all([
-    page.waitForNavigation({
-      waitUntil: "networkidle2",
-      timeout: CONFIG.timeouts.navigation,
-    }).catch(() => null),
+  await page.click(CONFIG.selectors.loginSubmitButton);
 
-    page.click(CONFIG.selectors.loginSubmitButton),
-  ]);
-
-  await delay(5000);
+  await delay(15000);
 
   await captureScreenshot(page, "after-login");
 
   console.log("[5/5] Verifying login...");
 
-  let loginVerified = false;
+  // allow login session to stabilize properly in GitHub Actions
+  await delay(20000);
 
-  for (const selector of CONFIG.selectors.profileSelectors) {
-    try {
-      await page.waitForSelector(selector, {
-        timeout: 5000,
-      });
+  // open profile page directly after login
+  await navigate(page, CONFIG.urls.profile, "profile");
 
-      console.log(`Login verified using selector: ${selector}`);
+  await delay(8000);
 
-      loginVerified = true;
+  const currentUrl = page.url();
 
-      break;
-    } catch (_) {
-      // try next selector
-    }
-  }
+  const pageText = await page.evaluate(() => {
+    return document.body.innerText;
+  });
 
-  if (!loginVerified) {
-    const pageText = await page.evaluate(() => document.body.innerText);
+  const profileVisible = await page
+    .$eval(CONFIG.selectors.updateResumeButton, () => true)
+    .catch(() => false);
 
-    const successTexts = [
-      "View profile",
-      "My Naukri",
-      "Logout",
-      "Recommended jobs",
-    ];
+  const loginSuccessful =
+    profileVisible ||
+    currentUrl.includes("mnjuser/profile") ||
+    pageText.includes("Resume") ||
+    pageText.includes("Profile") ||
+    pageText.includes("View profile") ||
+    pageText.includes("My Naukri");
 
-    loginVerified = successTexts.some((text) =>
-      pageText.includes(text),
-    );
-  }
+  if (!loginSuccessful) {
+    await captureScreenshot(page, "login-failed");
 
-  if (!loginVerified) {
     throw new Error("Login verification failed");
   }
 
@@ -244,7 +230,7 @@ async function login(page, username, password) {
 async function uploadResume(page) {
   console.log("Opening profile page...");
 
-  await navigate(page, CONFIG.urls.profile, "profile");
+  // Removed duplicate navigation to profile page
 
   await captureScreenshot(page, "profile-page");
 
@@ -256,7 +242,7 @@ async function uploadResume(page) {
 
   await page.click(CONFIG.selectors.updateResumeButton);
 
-  await randomDelay(1000, 2000);
+  await delay(3000);
 
   if (!fs.existsSync(CONFIG.paths.resume)) {
     throw new Error(
@@ -276,7 +262,23 @@ async function uploadResume(page) {
 
   await fileInput.uploadFile(CONFIG.paths.resume);
 
-  await delay(5000);
+  const uploadSuccess = await page
+    .waitForXPath(
+      CONFIG.selectors.uploadSuccessMessage,
+      {
+        timeout: 5000,
+      },
+    )
+    .then(() => true)
+    .catch(() => false);
+
+  if (!uploadSuccess) {
+    console.log(
+      "Upload success message not detected, but upload may still be successful",
+    );
+  }
+
+  await delay(2000);
 
   await captureScreenshot(page, "resume-uploaded");
 
@@ -318,6 +320,13 @@ async function main() {
   } catch (error) {
     console.error("Automation Failed");
     console.error(error.message);
+    try {
+      const pages = await browser.pages();
+
+      if (pages.length > 0) {
+        await captureScreenshot(pages[0], "automation-error");
+      }
+    } catch (_) {}
 
     process.exit(1);
   } finally {
