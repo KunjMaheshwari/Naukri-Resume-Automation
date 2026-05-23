@@ -228,14 +228,40 @@ async function login(page, username, password) {
 
     await delay(10000);
   } else {
-    console.log("Profile link not found. Falling back to direct URL...");
+    console.log("Profile link not found. Using resilient profile navigation...");
 
-    await page.goto(CONFIG.urls.profile, {
-      waitUntil: "domcontentloaded",
-      timeout: CONFIG.timeouts.navigation,
+    try {
+      await page.goto(CONFIG.urls.profile, {
+        waitUntil: "load",
+        timeout: 20000,
+      });
+    } catch (error) {
+      console.log(
+        "Profile navigation timeout occurred, checking current page state...",
+      );
+    }
+
+    // Give React UI enough time to hydrate in GitHub Actions
+    await delay(15000);
+
+    // If already authenticated, Naukri usually redirects correctly
+    // even when Puppeteer reports a navigation timeout.
+
+    const currentUrlAfterNavigation = page.url();
+
+    const currentPageText = await page.evaluate(() => {
+      return document.body.innerText;
     });
 
-    await delay(10000);
+    const profileRecovered =
+      currentUrlAfterNavigation.includes("mnjuser/profile") ||
+      currentPageText.includes("Update resume") ||
+      currentPageText.includes("Resume") ||
+      currentPageText.includes("Profile");
+
+    if (!profileRecovered) {
+      throw new Error("Unable to reach authenticated profile page");
+    }
   }
 
   const currentUrl = page.url();
