@@ -22,7 +22,7 @@ const CONFIG = {
 
     updateResumeButton: "input[value='Update resume']",
 
-    viewProfileLink: "a[normalize-space()='View profile']",
+    viewProfileLink: "View profile",
 
     uploadSuccessMessage:
       "//p[text()='Resume has been successfully uploaded.']",
@@ -103,6 +103,9 @@ async function launchBrowser() {
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
+      "--disable-features=site-per-process",
+      "--disable-http2",
+      "--disable-background-networking",
       "--window-size=1366,768",
     ],
 
@@ -193,12 +196,47 @@ async function login(page, username, password) {
   console.log("[5/5] Verifying login...");
 
   // allow login session to stabilize properly in GitHub Actions
-  await delay(20000);
 
-  // open profile page directly after login
-  await navigate(page, CONFIG.urls.profile, "profile");
+  await delay(10000);
 
-  await delay(8000);
+  // Avoid direct page.goto() because GitHub Actions Chromium
+  // intermittently throws ERR_HTTP2_PROTOCOL_ERROR on Naukri.
+  // Instead use the already authenticated UI session.
+
+  const profileLinkFound = await page
+    .evaluate((linkText) => {
+      const links = [...document.querySelectorAll("a")];
+
+      const profileLink = links.find((link) =>
+        link.innerText
+          ?.trim()
+          .toLowerCase()
+          .includes(linkText.toLowerCase()),
+      );
+
+      if (profileLink) {
+        profileLink.click();
+        return true;
+      }
+
+      return false;
+    }, CONFIG.selectors.viewProfileLink)
+    .catch(() => false);
+
+  if (profileLinkFound) {
+    console.log("Opening profile from authenticated UI...");
+
+    await delay(10000);
+  } else {
+    console.log("Profile link not found. Falling back to direct URL...");
+
+    await page.goto(CONFIG.urls.profile, {
+      waitUntil: "domcontentloaded",
+      timeout: CONFIG.timeouts.navigation,
+    });
+
+    await delay(10000);
+  }
 
   const currentUrl = page.url();
 
@@ -215,8 +253,8 @@ async function login(page, username, password) {
     currentUrl.includes("mnjuser/profile") ||
     pageText.includes("Resume") ||
     pageText.includes("Profile") ||
-    pageText.includes("View profile") ||
-    pageText.includes("My Naukri");
+    pageText.includes("My Naukri") ||
+    pageText.includes("Update resume");
 
   if (!loginSuccessful) {
     await captureScreenshot(page, "login-failed");
@@ -242,7 +280,7 @@ async function uploadResume(page) {
 
   await page.click(CONFIG.selectors.updateResumeButton);
 
-  await delay(3000);
+  await delay(1500);
 
   if (!fs.existsSync(CONFIG.paths.resume)) {
     throw new Error(
@@ -263,8 +301,12 @@ async function uploadResume(page) {
   await fileInput.uploadFile(CONFIG.paths.resume);
 
   const uploadSuccess = await page
-    .waitForXPath(
-      CONFIG.selectors.uploadSuccessMessage,
+    .waitForFunction(
+      () => {
+        return document.body.innerText.includes(
+          "Resume has been successfully uploaded.",
+        );
+      },
       {
         timeout: 5000,
       },
