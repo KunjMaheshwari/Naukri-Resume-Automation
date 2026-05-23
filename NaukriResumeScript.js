@@ -1,4 +1,7 @@
-const puppeteer = require("puppeteer");
+const puppeteer = require("puppeteer-extra");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+
+puppeteer.use(StealthPlugin());
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
@@ -22,7 +25,7 @@ const CONFIG = {
 
     updateResumeButton: "input[value='Update resume']",
 
-    viewProfileLink: "View profile",
+    viewProfileLink: "//a[normalize-space()='View profile']",
 
     uploadSuccessMessage:
       "//p[text()='Resume has been successfully uploaded.']",
@@ -44,8 +47,8 @@ const CONFIG = {
   },
 
   timeouts: {
-    navigation: 45000,
-    selector: 15000,
+    navigation: 90000,
+    selector: 30000,
   },
 
   paths: {
@@ -106,6 +109,11 @@ async function launchBrowser() {
       "--disable-features=site-per-process",
       "--disable-http2",
       "--disable-background-networking",
+      "--disable-web-security",
+      "--disable-features=IsolateOrigins,site-per-process",
+      "--disable-site-isolation-trials",
+      "--disable-notifications",
+      "--disable-infobars",
       "--disable-blink-features=AutomationControlled",
       "--no-first-run",
       "--no-default-browser-check",
@@ -136,11 +144,11 @@ async function navigate(page, url, label) {
   console.log(`Navigating to ${label}...`);
 
   await page.goto(url, {
-    waitUntil: "domcontentloaded",
+    waitUntil: "networkidle2",
     timeout: CONFIG.timeouts.navigation,
   });
 
-  await delay(8000);
+  await delay(12000);
 
   console.log(`Loaded: ${await page.title()}`);
 }
@@ -154,43 +162,43 @@ async function login(page, username, password) {
 
   console.log("[2/5] Opening login modal...");
 
-  await page.waitForSelector(CONFIG.selectors.loginButton);
+  await page.waitForSelector(CONFIG.selectors.loginButton, {
+    visible: true,
+    timeout: 30000,
+  });
 
   await page.click(CONFIG.selectors.loginButton);
 
-  await randomDelay();
+  await delay(5000);
 
   console.log("[3/5] Entering credentials...");
 
-  await page.waitForSelector(CONFIG.selectors.usernameInput);
-
-  await page.click(CONFIG.selectors.usernameInput, {
-    clickCount: 3,
+  await page.waitForSelector(CONFIG.selectors.usernameInput, {
+    visible: true,
+    timeout: 30000,
   });
-
-  await page.keyboard.press("Backspace");
 
   await page.type(CONFIG.selectors.usernameInput, username, {
-    delay: 50,
+    delay: 120,
   });
 
-  await randomDelay();
-
-  await page.click(CONFIG.selectors.passwordInput, {
-    clickCount: 3,
-  });
-
-  await page.keyboard.press("Backspace");
+  await delay(2000);
 
   await page.type(CONFIG.selectors.passwordInput, password, {
-    delay: 50,
+    delay: 120,
   });
 
-  await randomDelay();
+  await delay(3000);
 
   console.log("[4/5] Clicking login button...");
 
-  await page.click(CONFIG.selectors.loginSubmitButton);
+  await Promise.all([
+    page.click(CONFIG.selectors.loginSubmitButton),
+    page.waitForNavigation({
+      waitUntil: "networkidle2",
+      timeout: 90000,
+    }).catch(() => null),
+  ]);
 
   await delay(15000);
 
@@ -198,43 +206,23 @@ async function login(page, username, password) {
 
   console.log("[5/5] Verifying login...");
 
-  // wait for login session to settle
-  await delay(8000);
+  const currentUrl = page.url();
 
-  console.log("Checking authenticated session...");
+  console.log(`Current URL after login: ${currentUrl}`);
 
-  const loginSuccessful = await Promise.race([
-    page
-      .waitForFunction(
-        () => {
-          const bodyText = document.body
-            ? document.body.innerText
-            : "";
+  const bodyText = await page.evaluate(() => {
+    return document.body ? document.body.innerText : "";
+  });
 
-          return (
-            window.location.href.includes("naukri.com") &&
-            (
-              bodyText.includes("View profile") ||
-              bodyText.includes("My Naukri") ||
-              bodyText.includes("Update resume") ||
-              bodyText.includes("Profile")
-            )
-          );
-        },
-        {
-          timeout: 30000,
-        },
-      )
-      .then(() => true)
-      .catch(() => false),
-
-    page
-      .waitForSelector(CONFIG.selectors.updateResumeButton, {
-        timeout: 30000,
-      })
-      .then(() => true)
-      .catch(() => false),
-  ]);
+  const loginSuccessful =
+    currentUrl.includes("naukri.com") &&
+    !currentUrl.includes("login") &&
+    (
+      bodyText.includes("My Naukri") ||
+      bodyText.includes("View profile") ||
+      bodyText.includes("Update resume") ||
+      bodyText.includes("Profile")
+    );
 
   if (!loginSuccessful) {
     await captureScreenshot(page, "login-failed");
@@ -246,17 +234,24 @@ async function login(page, username, password) {
 }
 
 async function uploadResume(page) {
-  console.log("Opening profile page...");
+  console.log("Opening authenticated profile page...");
 
-  // navigate only after login session is confirmed
   await page.goto(CONFIG.urls.profile, {
-    waitUntil: "domcontentloaded",
-    timeout: 30000,
+    waitUntil: "networkidle2",
+    timeout: 90000,
   });
 
-  await delay(10000);
+  await delay(15000);
 
   await captureScreenshot(page, "profile-page");
+
+  const currentUrl = page.url();
+
+  console.log(`Profile URL: ${currentUrl}`);
+
+  if (currentUrl.includes("login")) {
+    throw new Error("Session expired or redirected to login page");
+  }
 
   console.log("Opening upload control...");
 
@@ -264,21 +259,9 @@ async function uploadResume(page) {
     CONFIG.selectors.updateResumeButton,
     {
       visible: true,
-      timeout: 30000,
+      timeout: 60000,
     },
   );
-
-  await page.click(CONFIG.selectors.updateResumeButton);
-
-  await delay(1500);
-
-  if (!fs.existsSync(CONFIG.paths.resume)) {
-    throw new Error(
-      `Resume file not found: ${CONFIG.paths.resume}`,
-    );
-  }
-
-  console.log("Uploading resume...");
 
   const fileInput = await page.$(
     CONFIG.selectors.fileInput,
@@ -287,6 +270,14 @@ async function uploadResume(page) {
   if (!fileInput) {
     throw new Error("File input not found");
   }
+
+  if (!fs.existsSync(CONFIG.paths.resume)) {
+    throw new Error(
+      `Resume file not found: ${CONFIG.paths.resume}`,
+    );
+  }
+
+  console.log("Uploading resume...");
 
   await fileInput.uploadFile(CONFIG.paths.resume);
 
@@ -298,19 +289,21 @@ async function uploadResume(page) {
         );
       },
       {
-        timeout: 5000,
+        timeout: 10000,
       },
     )
     .then(() => true)
     .catch(() => false);
 
   if (!uploadSuccess) {
+    await captureScreenshot(page, "upload-warning");
+
     console.log(
-      "Upload success message not detected, but upload may still be successful",
+      "Success message not detected, but upload may still be completed",
     );
   }
 
-  await delay(2000);
+  await delay(3000);
 
   await captureScreenshot(page, "resume-uploaded");
 
@@ -338,6 +331,14 @@ async function main() {
     const page = await browser.newPage();
 
     await configurePage(page);
+
+    await page.setCacheEnabled(false);
+
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => false,
+      });
+    });
 
     await login(page, username, password);
 

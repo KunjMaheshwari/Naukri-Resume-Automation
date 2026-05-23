@@ -28,7 +28,7 @@ jobs:
       NAUKRI_PASSWORD: ${{ secrets.NAUKRI_PASSWORD }}
       DEBUG_MODE: ${{ vars.DEBUG_MODE || 'false' }}
       PUPPETEER_CACHE_DIR: ${{ github.workspace }}/.cache/puppeteer
-      HEADLESS: "true"
+      HEADLESS: "false"
       CI: "true"
 
     steps:

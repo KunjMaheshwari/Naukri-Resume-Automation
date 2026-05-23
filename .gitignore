@@ -2,8 +2,6 @@ webdriver/
 
 # Environment files
 .env
-.env.*
-!.env.example
 
 # JavaScript / Node.js
 node_modules/
