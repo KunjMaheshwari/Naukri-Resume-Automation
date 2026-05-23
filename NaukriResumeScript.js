@@ -20,7 +20,12 @@ const CONFIG = {
 
     loginSubmitButton: "button[type='submit']",
 
-    profileIcon: ".nI-gNb-drawer__bars",
+    profileSelectors: [
+      ".view-profile-wrapper",
+      "a[href*='mnjuser/profile']",
+      ".nI-gNb-drawer",
+      ".nI-gNb-info__sub-link",
+    ],
 
     updateResumeButton: "input[value='Update resume']",
 
@@ -196,9 +201,42 @@ async function login(page, username, password) {
 
   console.log("[5/5] Verifying login...");
 
-  await page.waitForSelector(CONFIG.selectors.profileIcon, {
-    timeout: 15000,
-  });
+  let loginVerified = false;
+
+  for (const selector of CONFIG.selectors.profileSelectors) {
+    try {
+      await page.waitForSelector(selector, {
+        timeout: 5000,
+      });
+
+      console.log(`Login verified using selector: ${selector}`);
+
+      loginVerified = true;
+
+      break;
+    } catch (_) {
+      // try next selector
+    }
+  }
+
+  if (!loginVerified) {
+    const pageText = await page.evaluate(() => document.body.innerText);
+
+    const successTexts = [
+      "View profile",
+      "My Naukri",
+      "Logout",
+      "Recommended jobs",
+    ];
+
+    loginVerified = successTexts.some((text) =>
+      pageText.includes(text),
+    );
+  }
+
+  if (!loginVerified) {
+    throw new Error("Login verification failed");
+  }
 
   console.log("Login successful");
 }
