@@ -95,7 +95,7 @@ async function launchBrowser() {
 
   const browser = await puppeteer.launch({
     headless: CONFIG.browser.headless,
-
+    protocolTimeout: 120000,
     defaultViewport: CONFIG.browser.viewport,
 
     args: [
@@ -199,75 +199,21 @@ async function login(page, username, password) {
 
   await delay(10000);
 
-  // Avoid direct page.goto() because GitHub Actions Chromium
-  // intermittently throws ERR_HTTP2_PROTOCOL_ERROR on Naukri.
-  // Instead use the already authenticated UI session.
+  // Simpler, stable logic to open the profile page after login session stabilizes
+  await delay(10000);
+  console.log("Opening authenticated profile page...");
 
-  const profileLinkFound = await page
-    .evaluate((linkText) => {
-      const links = [...document.querySelectorAll("a")];
+  await page.goto(CONFIG.urls.profile, {
+    waitUntil: "domcontentloaded",
+    timeout: 60000,
+  });
 
-      const profileLink = links.find((link) =>
-        link.innerText
-          ?.trim()
-          .toLowerCase()
-          .includes(linkText.toLowerCase()),
-      );
-
-      if (profileLink) {
-        profileLink.click();
-        return true;
-      }
-
-      return false;
-    }, CONFIG.selectors.viewProfileLink)
-    .catch(() => false);
-
-  if (profileLinkFound) {
-    console.log("Opening profile from authenticated UI...");
-
-    await delay(10000);
-  } else {
-    console.log("Profile link not found. Using resilient profile navigation...");
-
-    try {
-      await page.goto(CONFIG.urls.profile, {
-        waitUntil: "load",
-        timeout: 20000,
-      });
-    } catch (error) {
-      console.log(
-        "Profile navigation timeout occurred, checking current page state...",
-      );
-    }
-
-    // Give React UI enough time to hydrate in GitHub Actions
-    await delay(15000);
-
-    // If already authenticated, Naukri usually redirects correctly
-    // even when Puppeteer reports a navigation timeout.
-
-    const currentUrlAfterNavigation = page.url();
-
-    const currentPageText = await page.evaluate(() => {
-      return document.body.innerText;
-    });
-
-    const profileRecovered =
-      currentUrlAfterNavigation.includes("mnjuser/profile") ||
-      currentPageText.includes("Update resume") ||
-      currentPageText.includes("Resume") ||
-      currentPageText.includes("Profile");
-
-    if (!profileRecovered) {
-      throw new Error("Unable to reach authenticated profile page");
-    }
-  }
+  await delay(12000);
 
   const currentUrl = page.url();
 
   const pageText = await page.evaluate(() => {
-    return document.body.innerText;
+    return document.body ? document.body.innerText : "";
   });
 
   const profileVisible = await page
@@ -293,6 +239,7 @@ async function login(page, username, password) {
 
 async function uploadResume(page) {
   console.log("Opening profile page...");
+  await delay(5000);
 
   // Removed duplicate navigation to profile page
 
