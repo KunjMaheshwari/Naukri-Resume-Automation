@@ -34,8 +34,7 @@ const CONFIG = {
   },
 
   browser: {
-    headless:
-      String(process.env.HEADLESS || "false").toLowerCase() === "true",
+    headless: "new",
 
     viewport: {
       width: 1366,
@@ -99,6 +98,7 @@ async function launchBrowser() {
   const browser = await puppeteer.launch({
     headless: CONFIG.browser.headless,
     protocolTimeout: 120000,
+    ignoreHTTPSErrors: true,
     defaultViewport: CONFIG.browser.viewport,
 
     args: [
@@ -109,9 +109,10 @@ async function launchBrowser() {
       "--disable-features=site-per-process",
       "--disable-http2",
       "--disable-background-networking",
-      "--disable-web-security",
-      "--disable-features=IsolateOrigins,site-per-process",
-      "--disable-site-isolation-trials",
+      "--disable-extensions",
+      "--disable-sync",
+      "--hide-scrollbars",
+      "--mute-audio",
       "--disable-notifications",
       "--disable-infobars",
       "--disable-blink-features=AutomationControlled",
@@ -194,13 +195,19 @@ async function login(page, username, password) {
 
   await Promise.all([
     page.click(CONFIG.selectors.loginSubmitButton),
-    page.waitForNavigation({
-      waitUntil: "networkidle2",
-      timeout: 90000,
-    }).catch(() => null),
+    page.waitForResponse(
+      (response) => {
+        return response.url().includes("login") ||
+          response.url().includes("auth") ||
+          response.status() === 200;
+      },
+      {
+        timeout: 90000,
+      },
+    ).catch(() => null),
   ]);
 
-  await delay(15000);
+  await delay(25000);
 
   await captureScreenshot(page, "after-login");
 
@@ -209,6 +216,10 @@ async function login(page, username, password) {
   const currentUrl = page.url();
 
   console.log(`Current URL after login: ${currentUrl}`);
+
+  console.log("Waiting for authenticated session to stabilize...");
+
+  await delay(10000);
 
   const bodyText = await page.evaluate(() => {
     return document.body ? document.body.innerText : "";
@@ -334,9 +345,23 @@ async function main() {
 
     await page.setCacheEnabled(false);
 
+    await page.setJavaScriptEnabled(true);
+
     await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => false,
+      Object.defineProperty(navigator, "webdriver", {
+        get: () => undefined,
+      });
+
+      window.chrome = {
+        runtime: {},
+      };
+
+      Object.defineProperty(navigator, "plugins", {
+        get: () => [1, 2, 3, 4, 5],
+      });
+
+      Object.defineProperty(navigator, "languages", {
+        get: () => ["en-US", "en"],
       });
     });
 
