@@ -28,6 +28,8 @@ jobs:
       NAUKRI_PASSWORD: ${{ secrets.NAUKRI_PASSWORD }}
       DEBUG_MODE: ${{ vars.DEBUG_MODE || 'false' }}
       PUPPETEER_CACHE_DIR: ${{ github.workspace }}/.cache/puppeteer
+      HEADLESS: "true"
+      CI: "true"
 
     steps:
       # Source checkout with the resume asset under utils/.
@@ -145,6 +147,9 @@ jobs:
           set -euo pipefail
 
           echo "Starting Naukri resume upload automation..."
+          echo "Running in GitHub Actions headless Linux environment"
+          node --version
+          npm --version
           node NaukriResumeScript.js 2>&1 | tee debug/logs/naukri-resume-upload.log
 
       # Keep the run summary useful without exposing credentials.
