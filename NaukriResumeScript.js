@@ -106,6 +106,9 @@ async function launchBrowser() {
       "--disable-features=site-per-process",
       "--disable-http2",
       "--disable-background-networking",
+      "--disable-blink-features=AutomationControlled",
+      "--no-first-run",
+      "--no-default-browser-check",
       "--window-size=1366,768",
     ],
 
@@ -195,38 +198,43 @@ async function login(page, username, password) {
 
   console.log("[5/5] Verifying login...");
 
-  // allow login session to stabilize properly in GitHub Actions
+  // wait for login session to settle
+  await delay(8000);
 
-  await delay(10000);
+  console.log("Checking authenticated session...");
 
-  // Simpler, stable logic to open the profile page after login session stabilizes
-  await delay(10000);
-  console.log("Opening authenticated profile page...");
+  const loginSuccessful = await Promise.race([
+    page
+      .waitForFunction(
+        () => {
+          const bodyText = document.body
+            ? document.body.innerText
+            : "";
 
-  await page.goto(CONFIG.urls.profile, {
-    waitUntil: "domcontentloaded",
-    timeout: 60000,
-  });
+          return (
+            window.location.href.includes("naukri.com") &&
+            (
+              bodyText.includes("View profile") ||
+              bodyText.includes("My Naukri") ||
+              bodyText.includes("Update resume") ||
+              bodyText.includes("Profile")
+            )
+          );
+        },
+        {
+          timeout: 30000,
+        },
+      )
+      .then(() => true)
+      .catch(() => false),
 
-  await delay(12000);
-
-  const currentUrl = page.url();
-
-  const pageText = await page.evaluate(() => {
-    return document.body ? document.body.innerText : "";
-  });
-
-  const profileVisible = await page
-    .$eval(CONFIG.selectors.updateResumeButton, () => true)
-    .catch(() => false);
-
-  const loginSuccessful =
-    profileVisible ||
-    currentUrl.includes("mnjuser/profile") ||
-    pageText.includes("Resume") ||
-    pageText.includes("Profile") ||
-    pageText.includes("My Naukri") ||
-    pageText.includes("Update resume");
+    page
+      .waitForSelector(CONFIG.selectors.updateResumeButton, {
+        timeout: 30000,
+      })
+      .then(() => true)
+      .catch(() => false),
+  ]);
 
   if (!loginSuccessful) {
     await captureScreenshot(page, "login-failed");
@@ -239,9 +247,14 @@ async function login(page, username, password) {
 
 async function uploadResume(page) {
   console.log("Opening profile page...");
-  await delay(5000);
 
-  // Removed duplicate navigation to profile page
+  // navigate only after login session is confirmed
+  await page.goto(CONFIG.urls.profile, {
+    waitUntil: "domcontentloaded",
+    timeout: 30000,
+  });
+
+  await delay(10000);
 
   await captureScreenshot(page, "profile-page");
 
@@ -249,6 +262,10 @@ async function uploadResume(page) {
 
   await page.waitForSelector(
     CONFIG.selectors.updateResumeButton,
+    {
+      visible: true,
+      timeout: 30000,
+    },
   );
 
   await page.click(CONFIG.selectors.updateResumeButton);
